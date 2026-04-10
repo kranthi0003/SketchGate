@@ -1,54 +1,161 @@
-# SketchGate
+# 🛡️ SketchGate
 
 A high-availability distributed rate limiter with penalty queues, built in Go.
 
 ## Overview
+
 SketchGate protects SaaS APIs from DDoS attacks and noisy neighbors using advanced algorithms:
-- Sliding Window Log (O(1) time, minimal space)
-- Hierarchical Token Bucket (tiered burst management)
-- Count-Min Sketch (sub-linear space frequency estimation)
+
+- **Count-Min Sketch** — Sub-linear space frequency estimation with error bound ε and probability 1-δ
+- **Sliding Window Log** — O(1) amortized rate tracking per user
+- **Hierarchical Token Bucket** — Tiered burst management (per-second, per-minute, etc.)
 
 ## Architecture
-- Go service with gRPC API
-- Redis for distributed state and atomic operations (Lua scripting)
-- Modular algorithm implementations
 
-## Academic Analysis
-### Big-O Comparison
-- Count-Min Sketch: $O(\log N)$ space for $N$ users
-- Hash Map: $O(N)$ space for $N$ users
+```
+┌──────────────┐     gRPC (:50051)     ┌──────────────────────┐
+│  API Client  │ ──────────────────▶   │   SketchGate Server  │
+└──────────────┘                       │                      │
+                                       │  ┌────────────────┐  │
+┌──────────────┐     HTTP (:8080)      │  │ Token Bucket   │  │
+│  Dashboard   │ ◀─────────────────    │  │ Sliding Window │  │
+└──────────────┘                       │  │ Count-Min Sketch│  │
+                                       │  └───────┬────────┘  │
+                                       └──────────┼───────────┘
+                                                   │
+                                       ┌───────────▼───────────┐
+                                       │   Redis (Sorted Sets, │
+                                       │   Lua Scripts, Keys)  │
+                                       └───────────────────────┘
+```
 
-### Why Count-Min Sketch?
-Provides frequency estimates with error bound $\epsilon$ and probability $1-\delta$ using multiple hash functions.
+- **Go service** with gRPC API (6 RPCs) and gRPC reflection
+- **Redis** for distributed state with atomic Lua scripts
+- **Graceful degradation** — runs in-memory if Redis is unavailable
+- **Penalty queue** — automatically penalizes repeat offenders
 
 ## Project Structure
-- service/: API logic (gRPC)
-- algorithms/: Core DAA implementations
-- redis/: Redis integration and Lua scripts
-- ui/: Web dashboard for visualization
-- clients/: Example scripts for testing
 
-## Portfolio Framing
-Sentinel-Stream: A distributed rate-limiting engine utilizing Count-Min Sketches for sub-linear space frequency estimation. Built to handle $100k+$ RPS with $O(1)$ amortized lookup time, ensuring system stability via a Hierarchical Token Bucket scheduling algorithm.
+```
+SketchGate/
+├── algorithms/          # Core algorithm implementations + tests
+│   ├── countmin.go          # Count-Min Sketch (frequency estimation)
+│   ├── slidingwindow.go     # Sliding Window Log (rate tracking)
+│   ├── tokenbucket.go       # Hierarchical Token Bucket (burst control)
+│   └── *_test.go            # 16 tests + benchmarks
+├── redis/               # Redis integration layer
+│   ├── client.go            # Connection management
+│   ├── ratelimit.go         # Atomic sliding window (Lua script)
+│   ├── countmin_store.go    # Distributed CMS store
+│   └── penalty.go           # Penalty queue (sorted sets)
+├── proto/               # Protobuf definitions + generated code
+│   └── sketchgate.proto     # gRPC API definition
+├── service/             # gRPC service implementation
+│   └── server.go            # Wires algorithms + Redis together
+├── cmd/server/          # Server entry point
+│   └── main.go
+├── clients/             # Test and demo clients
+│   ├── demo/main.go         # Interactive demo of all RPCs
+│   └── loadtest/main.go     # Load tester with DDoS simulation
+├── ui/                  # Web dashboard
+│   ├── main.go              # Go HTTP server with live dashboard
+│   └── Dockerfile
+└── docker-compose.yml   # Redis + Dashboard setup
+```
 
----
+## Quick Start
 
-## Getting Started
-### Local Docker Setup
-1. Install Docker and Docker Compose
-2. Clone this repo
-3. Run `docker-compose up --build` from the project root
-4. Access the web dashboard at http://localhost:8080
-5. Redis will be available at localhost:6379
-6. Use example client scripts in `/clients` to test API endpoints
+### Option 1: Docker (Redis + Dashboard)
 
-### Manual Setup (for development)
-1. Install Go and Redis
-2. Clone this repo
-3. Run `go mod init` and install dependencies
-4. Start the service
-5. Access the web dashboard at `/ui` for visualization
-6. Use example client scripts in `/clients` to test API endpoints
+```bash
+docker-compose up --build
+# Dashboard → http://localhost:8080
+# Redis → localhost:6379
+```
+
+### Option 2: Local Development
+
+```bash
+# 1. Start Redis
+docker run -d -p 6379:6379 redis:7-alpine
+
+# 2. Start the gRPC server
+go run cmd/server/main.go
+
+# 3. Start the dashboard (separate terminal)
+cd ui && go run main.go
+
+# 4. Run the demo client
+go run clients/demo/main.go
+
+# 5. Run a load test (100 req/s across 10 users for 10s)
+go run clients/loadtest/main.go -rps 100 -users 10 -duration 10s
+
+# 6. Simulate a DDoS / noisy neighbor
+go run clients/loadtest/main.go -burst -rps 500 -duration 5s
+```
+
+## gRPC API
+
+| RPC | Description |
+|-----|-------------|
+| `CheckRate` | Check if a request is allowed under rate limits |
+| `GetStatus` | Get full rate limit status for a user key |
+| `GetPenaltyQueue` | List top offending users |
+| `PardonUser` | Remove a user from the penalty queue |
+| `EstimateFrequency` | Get CMS frequency estimate for a key |
+| `Health` | Service and Redis health check |
+
+Use with [grpcurl](https://github.com/fullstorydev/grpcurl):
+
+```bash
+# Health check
+grpcurl -plaintext localhost:50051 sketchgate.RateLimiter/Health
+
+# Check rate limit
+grpcurl -plaintext -d '{"key": "user1", "tokens": 1}' \
+  localhost:50051 sketchgate.RateLimiter/CheckRate
+
+# View penalty queue
+grpcurl -plaintext -d '{"top_n": 10}' \
+  localhost:50051 sketchgate.RateLimiter/GetPenaltyQueue
+```
+
+## Academic Analysis
+
+### Big-O Comparison
+
+| Data Structure | Space | Lookup | Insert |
+|---------------|-------|--------|--------|
+| Count-Min Sketch | O(log N) | O(d) | O(d) |
+| Hash Map | O(N) | O(1) | O(1) |
+| Sliding Window Log | O(W) | O(1)* | O(1)* |
+| Token Bucket | O(1) | O(1) | O(1) |
+
+*O(1) amortized with lazy cleanup
+
+### Why Count-Min Sketch?
+
+Provides frequency estimates with error bound ε and probability 1-δ using multiple hash functions. For N=1M users, CMS uses ~14KB vs ~40MB for a hash map — a **2,800x** space reduction.
+
+### Why Hierarchical Token Buckets?
+
+A single token bucket can't enforce both per-second and per-minute limits simultaneously. Hierarchical buckets stack multiple tiers — a request must pass ALL tiers to be allowed, giving fine-grained burst control.
+
+## Configuration
+
+Default rate limiting config (customizable via `service.Config`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Window | 1 minute | Sliding window duration |
+| Request Limit | 100 | Max requests per window |
+| CMS Width | 2,718 | Count-Min Sketch columns |
+| CMS Depth | 5 | Count-Min Sketch hash functions |
+| Penalty Threshold | 3 | Violations before auto-penalty |
+| Token Bucket (fast) | 20 req/s, burst 20 | Per-second tier |
+| Token Bucket (slow) | 100 req/min, burst 100 | Per-minute tier |
 
 ## License
+
 MIT
