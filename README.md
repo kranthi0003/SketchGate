@@ -10,6 +10,34 @@ SketchGate protects SaaS APIs from DDoS attacks and noisy neighbors using advanc
 - **Sliding Window Log** — O(1) amortized rate tracking per user
 - **Hierarchical Token Bucket** — Tiered burst management (per-second, per-minute, etc.)
 
+## Demo
+
+### Dashboard — Load Test Console & Real-Time Results
+
+The web dashboard lets you configure and launch load tests interactively, with live results showing allowed/denied rates, latency, throughput, and penalized users.
+
+![Dashboard Overview](docs/screenshots/dashboard-overview.png)
+
+### Load Test with Server-Side Proof
+
+After each test, the **Server-Side Proof** panel shows before/after state captured directly from the gRPC backend — proving every request is real. The **Request Log** displays sampled individual `CheckRate()` gRPC calls with timestamps, response status, and latency.
+
+![Load Test Results](docs/screenshots/loadtest-results.png)
+
+### DDoS / Burst Mode Simulation
+
+Toggle **DDoS Mode** to simulate a single noisy neighbor flooding the API. The rate limiter blocks 94%+ of malicious traffic while the penalty queue tracks offenders.
+
+![DDoS Burst](docs/screenshots/ddos-burst.png)
+
+### Independent Verify Tool
+
+Query the gRPC backend directly for any user key. Tested keys show real frequency data from the Count-Min Sketch; untested keys show zero — proof the load tests are genuine.
+
+| Tested key (`user-0`) — ✅ Confirmed | Untested key (`phantom-never-tested`) — 🔵 Not found |
+|:---:|:---:|
+| ![Verify Found](docs/screenshots/verify-tool.png) | ![Verify Not Found](docs/screenshots/verify-not-found.png) |
+
 ## Architecture
 
 ```
