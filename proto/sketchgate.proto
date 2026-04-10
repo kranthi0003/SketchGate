@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package sketchgate;
+
+option go_package = "github.com/kranthi0003/SketchGate/proto";
+
+// SketchGate rate limiting service.
+service RateLimiter {
+  // Check if a request is allowed under rate limits.
+  rpc CheckRate(CheckRateRequest) returns (CheckRateResponse);
+
+  // Get current rate limit status for a key.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Get the penalty queue (top offenders).
+  rpc GetPenaltyQueue(GetPenaltyQueueRequest) returns (GetPenaltyQueueResponse);
+
+  // Pardon a user from the penalty queue.
+  rpc PardonUser(PardonUserRequest) returns (PardonUserResponse);
+
+  // Get frequency estimate from Count-Min Sketch.
+  rpc EstimateFrequency(EstimateFrequencyRequest) returns (EstimateFrequencyResponse);
+
+  // Health check.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message CheckRateRequest {
+  string key = 1;          // User or API key identifier
+  int64 tokens = 2;        // Number of tokens to consume (default 1)
+}
+
+message CheckRateResponse {
+  bool allowed = 1;
+  int64 remaining = 2;     // Remaining requests in window
+  int64 reset_at_ms = 3;   // When the window resets (unix ms)
+  bool penalized = 4;      // Whether user is in penalty queue
+  double penalty_score = 5; // Current penalty score
+}
+
+message GetStatusRequest {
+  string key = 1;
+}
+
+message GetStatusResponse {
+  int64 request_count = 1;     // Current requests in window
+  int64 limit = 2;             // Max requests allowed
+  int64 remaining = 3;
+  int64 reset_at_ms = 4;
+  bool penalized = 5;
+  double penalty_score = 6;
+  uint64 frequency_estimate = 7; // CMS frequency estimate
+  map<string, uint64> tier_tokens = 8; // Token bucket tier status
+}
+
+message GetPenaltyQueueRequest {
+  int64 top_n = 1;  // Number of top offenders to return
+}
+
+message GetPenaltyQueueResponse {
+  repeated PenaltyEntry entries = 1;
+  int64 total_penalized = 2;
+}
+
+message PenaltyEntry {
+  string key = 1;
+  double violations = 2;
+}
+
+message PardonUserRequest {
+  string key = 1;
+}
+
+message PardonUserResponse {
+  bool success = 1;
+}
+
+message EstimateFrequencyRequest {
+  string key = 1;
+}
+
+message EstimateFrequencyResponse {
+  uint64 estimate = 1;
+  uint64 total = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string redis_status = 2;
+  int64 uptime_seconds = 3;
+}
