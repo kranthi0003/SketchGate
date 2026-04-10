@@ -1,9 +1,9 @@
 # Go Dockerfile for SketchGate UI
 FROM golang:1.21-alpine
 WORKDIR /app
-COPY . .
+COPY go.mod go.sum ./
+RUN go mod download
+COPY ui/ ./ui/
 WORKDIR /app/ui
-RUN go mod init ui || true
-RUN go mod tidy
 EXPOSE 8080
 CMD ["go", "run", "main.go"]
